@@ -1,0 +1,14 @@
+/.gradle/
+/build/
+/app/build/
+/local.properties
+/.idea/
+*.iml
+.DS_Store
+*.apk
+*.ap_
+*.dex
+
+# Original decompile dump kept for review, but not for the clean source repo.
+/sources/
+/resources/

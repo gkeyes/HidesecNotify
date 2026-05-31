@@ -1,0 +1,6 @@
+name=HidesecNotify
+version=1.0.0
+minApiVersion=101
+targetApiVersion=101
+description=将手机分身通知伪装为系统后台清理通知，并禁用对应点击跳转
+staticScope=true
