@@ -14,4 +14,7 @@ The GitHub Actions workflow installs Gradle and Android SDK packages, then build
 
 ## Scope
 
-The module declares a static scope for `com.miui.securitycore`.
+The module declares a static scope for `com.miui.securitycore`. At runtime it
+registers notification hooks only in `com.miui.securitycore.remote` and tracks
+the exact `Notification.Builder` whose Second Space text was rewritten, so
+other SecurityCore notifications keep their click actions.

@@ -19,14 +19,17 @@ public final class NotificationTextRulesTest {
     public void keepsNonMatchingNotificationUntouched() {
         assertNull(NotificationTextRules.rewrite("系统安全提醒"));
         assertNull(NotificationTextRules.rewrite("手机分身中有3条未读消息"));
+        assertNull(NotificationTextRules.rewrite("手机分身中有任意条通知提醒"));
         assertNull(NotificationTextRules.rewrite(null));
     }
 
     @Test
-    public void detectsOnlyRewrittenText() {
-        assertTrue(NotificationTextRules.isRewrittenText("系统后台自动清理3个文件"));
-        assertFalse(NotificationTextRules.isRewrittenText("系统后台自动清理任务完成"));
-        assertFalse(NotificationTextRules.isRewrittenText("手机分身中有3条通知提醒"));
-        assertFalse(NotificationTextRules.isRewrittenText(null));
+    public void hooksOnlySecurityCoreRemoteProcess() {
+        assertTrue(NotificationTextRules.shouldHook(
+                "com.miui.securitycore", "com.miui.securitycore.remote"));
+        assertFalse(NotificationTextRules.shouldHook(
+                "com.miui.securitycore", "com.miui.securitycore"));
+        assertFalse(NotificationTextRules.shouldHook(
+                "com.example.other", "com.miui.securitycore.remote"));
     }
 }

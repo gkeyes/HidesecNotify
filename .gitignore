@@ -3,6 +3,7 @@
 /app/build/
 /local.properties
 /.idea/
+/.codegraph
 *.iml
 .DS_Store
 *.apk
@@ -12,3 +13,5 @@
 # Original decompile dump kept for review, but not for the clean source repo.
 /sources/
 /resources/
+/research/input/
+/research/decompiled/

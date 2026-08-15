@@ -1,7 +1,6 @@
 package com.example.hidesecnotify;
 
 import android.app.Notification;
-import android.os.Bundle;
 import android.util.Log;
 
 import java.lang.reflect.Method;
@@ -12,15 +11,18 @@ import io.github.libxposed.api.XposedModuleInterface;
 
 public final class HidesecNotifyModule extends XposedModule {
     private static final String TAG = "HidesecNotify";
+    private final NotificationRewriteState rewriteState = new NotificationRewriteState();
+    private String processName;
 
     @Override
     public void onModuleLoaded(XposedModuleInterface.ModuleLoadedParam param) {
-        log(Log.INFO, TAG, "Module loaded in process: " + safeProcessName(param));
+        processName = safeProcessName(param);
+        log(Log.INFO, TAG, "Module loaded in process: " + processName);
     }
 
     @Override
     public void onPackageLoaded(XposedModuleInterface.PackageLoadedParam param) {
-        if (!NotificationTextRules.TARGET_PACKAGE.equals(param.getPackageName())) {
+        if (!NotificationTextRules.shouldHook(param.getPackageName(), processName)) {
             return;
         }
 
@@ -49,11 +51,16 @@ public final class HidesecNotifyModule extends XposedModule {
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> {
                     CharSequence replacement = NotificationTextRules.rewrite((CharSequence) chain.getArg(0));
+                    Object builder = chain.getThisObject();
                     if (replacement == null) {
-                        return chain.proceed();
+                        Object result = chain.proceed();
+                        rewriteState.updateField(builder, methodName, false);
+                        return result;
                     }
 
-                    return chain.proceed(new Object[]{replacement});
+                    Object result = chain.proceed(new Object[]{replacement});
+                    rewriteState.updateField(builder, methodName, true);
+                    return result;
                 });
     }
 
@@ -65,42 +72,12 @@ public final class HidesecNotifyModule extends XposedModule {
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> {
                     Notification notification = (Notification) chain.proceed();
-                    if (isRewrittenNotification(notification)) {
+                    if (notification != null
+                            && rewriteState.hasRewrittenField(chain.getThisObject())) {
                         notification.contentIntent = null;
                     }
                     return notification;
                 });
-    }
-
-    private boolean isRewrittenNotification(Notification notification) {
-        if (notification == null) {
-            return false;
-        }
-        if (NotificationTextRules.isRewrittenText(notification.tickerText)) {
-            return true;
-        }
-
-        Bundle extras = notification.extras;
-        if (extras == null) {
-            return false;
-        }
-
-        return NotificationTextRules.isRewrittenText(extras.getCharSequence(Notification.EXTRA_TITLE))
-                || NotificationTextRules.isRewrittenText(extras.getCharSequence(Notification.EXTRA_TEXT))
-                || NotificationTextRules.isRewrittenText(extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
-                || containsRewrittenText(extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES));
-    }
-
-    private boolean containsRewrittenText(CharSequence[] values) {
-        if (values == null) {
-            return false;
-        }
-        for (CharSequence value : values) {
-            if (NotificationTextRules.isRewrittenText(value)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private String safeProcessName(XposedModuleInterface.ModuleLoadedParam param) {
