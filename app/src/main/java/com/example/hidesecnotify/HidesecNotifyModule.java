@@ -9,8 +9,18 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 import io.github.libxposed.api.XposedModuleInterface;
 
+/**
+ * Entry point (see META-INF/xposed/java_init.list).
+ *
+ * <p>Inside the SecurityCore remote process, rewrites the "second space" notification text
+ * set on {@link Notification.Builder} and drops the content intent of notifications whose
+ * text was rewritten, so tapping them does nothing.
+ */
 public final class HidesecNotifyModule extends XposedModule {
     private static final String TAG = "HidesecNotify";
+    private static final String BUILDER_CLASS = "android.app.Notification$Builder";
+    private static final String[] TEXT_SETTERS = {"setContentTitle", "setContentText", "setTicker"};
+
     private final NotificationRewriteState rewriteState = new NotificationRewriteState();
     private String processName;
 
@@ -26,23 +36,26 @@ public final class HidesecNotifyModule extends XposedModule {
             return;
         }
 
-        try {
-            Class<?> builderClass = Class.forName(
-                    "android.app.Notification$Builder",
-                    false,
-                    param.getDefaultClassLoader());
-
-            hookTextSetter(builderClass, "setContentTitle");
-            hookTextSetter(builderClass, "setContentText");
-            hookTextSetter(builderClass, "setTicker");
-            hookBuild(builderClass);
-
-            log(Log.INFO, TAG, "Notification hooks registered");
-        } catch (Throwable t) {
-            log(Log.ERROR, TAG, "Hook registration failed", t);
+        Class<?> builderClass = loadBuilderClass(param.getDefaultClassLoader());
+        if (builderClass == null) {
+            return;
         }
+
+        // Register each hook on its own so one missing method does not skip the others.
+        int registered = 0;
+        for (String setter : TEXT_SETTERS) {
+            if (tryHook(setter, () -> hookTextSetter(builderClass, setter))) {
+                registered++;
+            }
+        }
+        if (tryHook("build", () -> hookBuild(builderClass))) {
+            registered++;
+        }
+
+        log(Log.INFO, TAG, "Notification hooks registered: " + registered + "/" + (TEXT_SETTERS.length + 1));
     }
 
+    /** Rewrites a matching text argument and records on the builder whether it was rewritten. */
     private void hookTextSetter(Class<?> builderClass, String methodName) throws NoSuchMethodException {
         Method method = builderClass.getDeclaredMethod(methodName, CharSequence.class);
         method.setAccessible(true);
@@ -50,20 +63,21 @@ public final class HidesecNotifyModule extends XposedModule {
         hook(method)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> {
-                    CharSequence replacement = NotificationTextRules.rewrite((CharSequence) chain.getArg(0));
+                    Object arg = chain.getArg(0);
+                    CharSequence replacement = arg instanceof CharSequence
+                            ? NotificationTextRules.rewrite((CharSequence) arg)
+                            : null;
                     Object builder = chain.getThisObject();
-                    if (replacement == null) {
-                        Object result = chain.proceed();
-                        rewriteState.updateField(builder, methodName, false);
-                        return result;
-                    }
 
-                    Object result = chain.proceed(new Object[]{replacement});
-                    rewriteState.updateField(builder, methodName, true);
+                    Object result = replacement == null
+                            ? chain.proceed()
+                            : chain.proceed(new Object[]{replacement});
+                    rewriteState.updateField(builder, methodName, replacement != null);
                     return result;
                 });
     }
 
+    /** Clears the content intent of notifications built from a builder with rewritten text. */
     private void hookBuild(Class<?> builderClass) throws NoSuchMethodException {
         Method method = builderClass.getDeclaredMethod("build");
         method.setAccessible(true);
@@ -71,20 +85,44 @@ public final class HidesecNotifyModule extends XposedModule {
         hook(method)
                 .setExceptionMode(XposedInterface.ExceptionMode.PROTECTIVE)
                 .intercept(chain -> {
-                    Notification notification = (Notification) chain.proceed();
-                    if (notification != null
+                    Object result = chain.proceed();
+                    if (result instanceof Notification
                             && rewriteState.hasRewrittenField(chain.getThisObject())) {
-                        notification.contentIntent = null;
+                        ((Notification) result).contentIntent = null;
                     }
-                    return notification;
+                    return result;
                 });
     }
 
-    private String safeProcessName(XposedModuleInterface.ModuleLoadedParam param) {
+    private Class<?> loadBuilderClass(ClassLoader classLoader) {
+        try {
+            return Class.forName(BUILDER_CLASS, false, classLoader);
+        } catch (Throwable t) {
+            log(Log.ERROR, TAG, "Cannot load " + BUILDER_CLASS, t);
+            return null;
+        }
+    }
+
+    private boolean tryHook(String methodName, HookRegistration registration) {
+        try {
+            registration.register();
+            return true;
+        } catch (Throwable t) {
+            log(Log.ERROR, TAG, "Failed to hook Notification.Builder#" + methodName, t);
+            return false;
+        }
+    }
+
+    private static String safeProcessName(XposedModuleInterface.ModuleLoadedParam param) {
         try {
             return param.getProcessName();
         } catch (Throwable ignored) {
             return "<unknown>";
         }
+    }
+
+    @FunctionalInterface
+    private interface HookRegistration {
+        void register() throws Exception;
     }
 }
